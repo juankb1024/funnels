@@ -6,7 +6,10 @@
 		<ul class='listCircle'>
 			{if count($goalsWithoutFunnels) > 0}
 			<li><a onclick='' name='linkAddNewFunnel'><u>{'Funnels_AddNewFunnelLink'|translate}</u></a></li>
-			{/if} 
+			{/if}
+            {if count($numberOfGoals) == 0}
+            <h3>{'Funnels_AtLeastOneGoal'|translate}</h3>
+            {/if}
 			{if count($funnels) > 0}
 			<li><a onclick='' name='linkEditFunnels'><u>{'Funnels_EditExistingFunnel'|translate}</u></a></li>
 			{/if}

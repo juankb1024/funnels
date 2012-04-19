@@ -21,6 +21,7 @@ $translations = array(
     'Funnels_AddNewFunnelLink' => 'Add a new Goal Funnel',
     'Funnels_Funnel' => 'Funnel',
     'Funnels_FunnelsManagement' => 'Funnels Management',
+    'Funnels_AtLeastOneGoal' => 'Your page must have at least one goal to use Funnels',
     'Funnels_EditExistingFunnel' => 'Edit existing Goal Funnels',
     'Funnels_AddNewGoal' => 'Add a new Goal',
     'Funnels_GoalsPluginDeactivated' => 'In order to add Funnels, you need to activate the Goals plugin.',

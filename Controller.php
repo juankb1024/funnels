@@ -31,6 +31,7 @@ class Piwik_Funnels_Controller extends Piwik_Controller
 		$view->userCanEditFunnels = Piwik::isUserHasAdminAccess($this->idSite);
 		$view->onlyShowAddNewFunnel = true;
 		$view->goalsWithoutFunnels = Piwik_Funnels_API::getInstance()->getGoalsWithoutFunnels($this->idSite);
+        $view->numberOfGoals = Piwik_Funnels_API::getInstance()->getNumberOfGoals($this->idSite);
 		echo $view->render();
 	}
 	
@@ -42,6 +43,7 @@ class Piwik_Funnels_Controller extends Piwik_Controller
 		$view->funnelsJSON = json_encode($this->funnels);
 		$view->userCanEditFunnels = Piwik::isUserHasAdminAccess($this->idSite);
 		$view->goalsWithoutFunnels = Piwik_Funnels_API::getInstance()->getGoalsWithoutFunnels($this->idSite);
+        $view->numberOfGoals = Piwik_Funnels_API::getInstance()->getNumberOfGoals($this->idSite);
 		echo $view->render();
 	}
 	

@@ -63,7 +63,7 @@ class Piwik_Funnels_API
 	
 	public function getGoalsWithoutFunnels( $idSite )
 	{
-	  Piwik::checkUserHasViewAccess($idSite);
+	    Piwik::checkUserHasViewAccess($idSite);
 		$goals = Piwik_Goals_API::getInstance()->getGoals( $idSite );
 		$funnelsByGoal = $this->getFunnelsByGoal( $idSite );
 		$goalsWithoutFunnels = array();
@@ -75,6 +75,15 @@ class Piwik_Funnels_API
 		}
 		return $goalsWithoutFunnels;
 	}
+                                           
+
+    public function getNumberOfGoals( $idSite )
+    {
+        Piwik::checkUserHasViewAccess($idSite);
+        $goals = Piwik_Goals_API::getInstance()->getGoals( $idSite );
+        $numberOfGoals = count($goals);
+        return $goals;                                   
+    }
 	
 	public function addFunnel( $idSite, $idGoal, $steps )
 	{

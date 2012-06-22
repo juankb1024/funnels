@@ -20,6 +20,10 @@ class Piwik_Funnels extends Piwik_Plugin
     
     // 'magic' number to indicate a conversion that was done manually
 	const INDEX_MANUAL_CONVERSION = 0;
+        
+    // Fix for piwik 1.7.1 or greater
+        const TIME_IN_PAST_TO_SEARCH_FOR_VISITOR = 86400; //24 hours
+        
     /**
      * Return information about this plugin.
      *
@@ -95,6 +99,9 @@ class Piwik_Funnels extends Piwik_Plugin
      * is the 'referring' ID, and the one to be updated to (ie; passed in in 
      * the notification object) is the 'current' action ID
      * 
+     * Second note, manually triggered page views will trigger the Action record
+     * callback. But the referrer will be the same URL as it did not change.
+     * 
      * @param mixed $notification See the variable $valuesToUpdate in core/Tracker/Visit.php@318-361
      * @access public
      * @return void
@@ -117,7 +124,8 @@ class Piwik_Funnels extends Piwik_Plugin
         // log_link_visit_action to get the refering action.
         // Also use this query to find the Visit ID of this visit
 
-		$timeLookBack = date('Y-m-d H:i:s', time() - Piwik_Tracker_Visit::TIME_IN_PAST_TO_SEARCH_FOR_VISITOR);
+        // Piwik 1.7.1 & greater BUG: Piwik_Tracker_Visit::TIME_IN_PAST_TO_SEARCH_FOR_VISITOR no longer available
+		$timeLookBack = date('Y-m-d H:i:s', time() - Piwik_Tracker_Config::getInstance()->Tracker['visit_standard_length'] );
 
         $visits = Piwik_Query(
             "SELECT idvisit, visit_exit_idaction_url
@@ -136,20 +144,64 @@ class Piwik_Funnels extends Piwik_Plugin
         if ($visit === false) {
             return;
         }
-
-        $idActionUrl = $visit['visit_exit_idaction_url']; 
+        
         $idVisit = $visit['idvisit']; 
-		
+        
+//        $idRefererAction = $visit['visit_exit_idaction_url']; 
+        //it can be a goal instead of a url
+        $idRefererAction = Piwik_FetchOne(
+                "SELECT idaction_url 
+                FROM ".Piwik_Common::prefixTable('log_funnel_step')." 
+                WHERE  idsite = ?
+                AND    idvisit = ?
+                AND    idaction_url_next is null
+                ORDER BY server_time DESC", array($idSite, $idVisit));
+        
+        //If it's the first ever action recorded by a visitor
+        if ($idRefererAction === FALSE) {
+            $idRefererAction = $visit['visit_exit_idaction_url']; 
+        }
+
+        //Register Goal Id's as Actions as they are now part of a step and should be treated as page titles
+        $actionUrl = $_GET['idgoal'];
+        $actionName = "GoalId_".$actionUrl;
+        
+        $idActionUrl = Piwik_FetchOne("SELECT idaction
+                        FROM " . Piwik_Common::prefixTable('log_action') . " 
+                        WHERE name = ?", $actionName);
+
+        if (!$idActionUrl)
+        {
+            $sql = "INSERT INTO ". Piwik_Common::prefixTable('log_action'). 
+				"( name, hash, type ) VALUES (?,CRC32(?),?)";
+            Piwik_Query( $sql, array($actionName, $actionName, 4) );
+            
+            $idActionUrl = Piwik_FetchOne(
+                    "SELECT idaction
+                        FROM " . Piwik_Common::prefixTable('log_action') . " 
+                        WHERE name = ?
+                            AND type = ?", array($actionName, 4));
+            
+        } 
+        
+        //This was just inserted so it should not fail else fail silently
+        if (!$idActionUrl) {
+            return;
+        }
+            
         $this->doStepMatchAndSave(
             $idSite,
             $idVisit,
+            $idRefererAction,
+            $actionName,
+            $actionUrl,
             $idActionUrl
         );
 
     }
 
     /**
-     * This is called when an Action is called on piwik.php - ie, an actul 
+     * This is called when an Action is called on piwik.php - ie, an actual 
      * visitor has hit the site, and the JS has performed a call to Piwik. 
      * This means that a manual goal conversion will NOT trigger this 
      * callback! 
@@ -164,15 +216,29 @@ class Piwik_Funnels extends Piwik_Plugin
         $idSite = $info['idSite'];
 
         $action = $notification->getNotificationObject();
+        
+        //it can be a goal instead of a url
+        $idRefererAction = Piwik_FetchOne(
+                "SELECT idaction_url 
+                FROM ".Piwik_Common::prefixTable('log_funnel_step')." 
+                WHERE  idsite = ?
+                AND    idvisit = ?
+                AND    idaction_url_next is null
+                ORDER BY server_time DESC", array($idSite, $info['idVisit']));
+        
+        //If it's the first ever action recorded by a visitor
+        if ($idRefererAction === FALSE) {
+            $idRefererAction = $info['idRefererActionUrl']; 
+        }
 
-        // idRefererActionurl is the UID of theuer's LAST Action interacting 
+        // idRefererActionurl is the UID of the user's LAST Action interacting 
         // with Piwik.
         // These two together give a link to a history of actions, and form a 
         // type of linked list in the log_funnel_step table.
         $this->doStepMatchAndSave(
             $idSite,
             $info['idVisit'],
-            $info['idRefererActionUrl'],
+            $idRefererAction,
             $action->getActionName(),
             htmlspecialchars_decode($action->getActionUrl()),
             $action->getIdActionUrl()
@@ -180,6 +246,7 @@ class Piwik_Funnels extends Piwik_Plugin
 
     }
 
+    //TODO BUG: if $step['case_sensitive']=false && $step['pattern_type']=contains then Step will mismatch urls for page titles. Severity: Medium
     function doStepMatchAndSave(
         $idSite,
         $idVisit,
@@ -203,24 +270,70 @@ class Piwik_Funnels extends Piwik_Plugin
         {
             return;
         }
-
-        printDebug("idActionUrl " . $idActionUrl . " idSite " . $idSite . " idVisit " . $idVisit . " idRefererAction " . $idRefererAction);
-        // Is this the next action for a recorded funnel step? 
-        $previous_step_action = Piwik_Query("UPDATE ".Piwik_Common::prefixTable('log_funnel_step')."
-            SET   idaction_url_next = ?
+        
+        //Check to see if manual goal conversion is a funnel goal and not step goal
+//        if (strstr($actionName, "GoalId_") !== FALSE)
+//        {
+            $query = Piwik_Query("SELECT idfunnel FROM " . Piwik_Common::prefixTable('log_funnel_step') . "
             WHERE idsite = ? 
             AND   idvisit = ? 
             AND   idaction_url = ?
-            AND   idaction_url_next is null", 
-            array($idActionUrl, $idSite, $idVisit, $idRefererAction));
+            AND   idaction_url_next is null", array($idSite, $idVisit, $idRefererAction));
 
+            while ($row = $query->fetch() )
+            {
+                $idFunnel = $row['idfunnel'];
+                $funnel = $funnels[$idFunnel];
+                $idGoal = $funnel['idgoal'];
+
+                if ($idGoal == $actionUrl)
+                {
+                    printDebug("idActionUrl " . Piwik_Funnels::INDEX_MANUAL_CONVERSION . " idSite " . $idSite . " idVisit " . $idVisit . " idRefererAction " . $idRefererAction);
+                    
+                    $previous_step_action = Piwik_Query("UPDATE " . Piwik_Common::prefixTable('log_funnel_step') . "
+                        SET   idaction_url_next = ?
+                        WHERE idsite = ? 
+                        AND   idfunnel = ?
+                        AND   idvisit = ? 
+                        AND   idaction_url = ?
+                        AND   idaction_url_next is null", 
+                        array(Piwik_Funnels::INDEX_MANUAL_CONVERSION, $idSite, $idFunnel, $idVisit, $idRefererAction));
+                }else{
+                    printDebug("idActionUrl " . $idActionUrl . " idSite " . $idSite . " idVisit " . $idVisit . " idRefererAction " . $idRefererAction);
+                    $previous_step_action = Piwik_Query("UPDATE ".Piwik_Common::prefixTable('log_funnel_step')."
+                        SET   idaction_url_next = ?
+                        WHERE idsite = ? 
+                        AND   idfunnel = ?
+                        AND   idvisit = ? 
+                        AND   idaction_url = ?
+                        AND   idaction_url_next is null", 
+                        array($idActionUrl, $idSite, $idFunnel, $idVisit, $idRefererAction));
+                }
+            }
+//        }else{
+//        printDebug("idActionUrl " . $idActionUrl . " idSite " . $idSite . " idVisit " . $idVisit . " idRefererAction " . $idRefererAction);
+//        //FIXED BUG idactionurl should come from goalid not from url id previous acrion has a goal
+//        // Is this the next action for a recorded funnel step? 
+//        $previous_step_action = Piwik_Query("UPDATE ".Piwik_Common::prefixTable('log_funnel_step')."
+//            SET   idaction_url_next = ?
+//            WHERE idsite = ? 
+//            AND   idvisit = ? 
+//            AND   idaction_url = ?
+//            AND   idaction_url_next is null", 
+//            array($idActionUrl, $idSite, $idVisit, $idRefererAction));
+//        }
+        
+        /**
+         *  No longer used because a manual goal can be part of a step.
+         */
         // early out for special case of manual conversion
         // Since this is a manual conversion for a goal, there is no URL to 
         // match with, so the following loop is simply a waste of resources
-        if ($idActionUrl == Piwik_Funnels::INDEX_MANUAL_CONVERSION) {
-            return;
-        }
-
+//        if ($idActionUrl == Piwik_Funnels::INDEX_MANUAL_CONVERSION) {
+//            return;
+//        }
+        
+        //Funnel step detection
         foreach($funnels as &$funnel)
         {
             $steps = $funnel['steps'];
@@ -233,11 +346,15 @@ class Piwik_Funnels extends Piwik_Plugin
                 if($step['match_attribute'] == 'title')
                 {
                     $url = $actionName;
+                    $idActionUrl = Piwik_FetchOne("SELECT idaction FROM ".Piwik_Common::prefixTable('log_action')."
+                                WHERE name = ?", $actionName);
                 }
-
+                
+                //If there is a match then save as step in table
+                //TODO BUG: if $step['case_sensitive']=false && $step['pattern_type']=contains then Step will mismatch urls for page titles. Severity: Medium
                 if (self::isMatch($url, $step['pattern_type'], $step['url'], $step['case_sensitive']))
                 {
-                    printDebug("Matched Goal Funnel " . $funnel['idfunnel'] . " Step " . $step['idstep'] . "(name: " . $step['name'] . ", url: " . $step['url']. "). ");
+                    printDebug("Matched Funnel " . $funnel['idfunnel'] . " Step " . $step['idstep'] . "(name: " . $step['name'] . ", url: " . $step['url']. "). ");
                     $serverTime = time();
                     $datetimeServer = Piwik_Tracker::getDatetimeFromTimestamp($serverTime);
 
@@ -294,6 +411,8 @@ class Piwik_Funnels extends Piwik_Plugin
         $idSite = Piwik_Common::getRequestVar('idSite');
      	$funnels = Piwik_Funnels_API::getInstance()->getFunnels($idSite);
         $goalsWithoutFunnels = Piwik_Funnels_API::getInstance()->getGoalsWithoutFunnels($idSite);
+        $goals = Piwik_Funnels_API::getInstance()->getGoals($idSite);
+        
         if(count($funnels) == 0 && count($goalsWithoutFunnels) > 0)
         {	
             Piwik_AddMenu('Funnels', Piwik_Translate('Funnels_AddNewFunnel') , array('module' => 'Funnels', 'action' => 'addNewFunnel'));
@@ -339,6 +458,7 @@ class Piwik_Funnels extends Piwik_Plugin
                 }
             }
 
+            // foreach step
             for ($i = 0;$i <= $last_index; $i++) {
                 $current_step = &$funnelDefinition['steps'][$i];
                 $idStep = $current_step['idstep'];
@@ -353,16 +473,16 @@ class Piwik_Funnels extends Piwik_Plugin
                 {
                     $previous_step = $funnelDefinition['steps'][$i-1];	
                     $nb_prev_step_actions = 0;
-                    foreach ($previous_step['idaction_url'] as $key => $value)
+                    foreach ($previous_step['idaction_url'] as $key => $value)//$value = idaction_url('id', 'value') pair
                     {
-                        if (isset($current_step['idaction_url_ref'][$key]))
+                        if (isset($current_step['idaction_url_ref'][$key]))//If the current step came from previous step
                         {
-                            $nb_prev_step_actions += $current_step['idaction_url_ref'][$key]['value'];
+                            $nb_prev_step_actions += $current_step['idaction_url_ref'][$key]['value'];//referrence is ok
                             unset($current_step['idaction_url_ref'][$key]);
-                        }
+                        }//remaining refs are not part of funnels
                         
                     }
-                    $recordName = Piwik_Funnels::getRecordName('nb_next_step_actions', $idFunnel, $previous_step['idstep']);
+                    $recordName = Piwik_Funnels::getRecordName('nb_next_step_actions', $idFunnel, $previous_step['idstep']);// number of visits that followed funnels
                     $archiveProcessing->insertNumericRecord($recordName, $nb_prev_step_actions);
                     // calculate a percent of people continuing from the previous step to this
                     $recordName = Piwik_Funnels::getRecordName('percent_next_step_actions', $idFunnel, $previous_step['idstep']);
@@ -374,47 +494,47 @@ class Piwik_Funnels extends Piwik_Plugin
                 {
                     
                     $next_step = $funnelDefinition['steps'][$i+1];	
-                    # Remove this step's next actions that are actions for the next funnel step
+                    # Remove this step's next actions that are actions for the next funnel step. Stored in next step.
                     foreach ($current_step['idaction_url_next'] as $key => $value)
                     {
-                        if (isset($next_step['idaction_url'][$key]))
+                        if (isset($next_step['idaction_url'][$key]))//If the next step came from the current step
                         {
-                            unset($current_step['idaction_url_next'][$key]);
+                            unset($current_step['idaction_url_next'][$key]);//It's a step of the funnel
                         }
-                        
+                        // remaining idaction_url_next are not funnel steps
                     }
                     
                     # Archive the next urls that aren't funnel steps
                     $idActionNext = new Piwik_DataTable();
                     $exitCount = 0;
-                    foreach($current_step['idaction_url_next'] as $id => $data)
+                    foreach($current_step['idaction_url_next'] as $id => $data)//$data = idaction_url_next('id', 'value') pairs
                     {
                         $idActionNext->addRowFromSimpleArray($data);
                         $exitCount += $data['value'];
                     }
                     $recordName = Piwik_Funnels::getRecordName('idaction_url_next', $idFunnel, $idStep);
-                    $archiveProcessing->insertBlobRecord($recordName, $idActionNext->getSerialized());
+                    $archiveProcessing->insertBlobRecord($recordName, $idActionNext->getSerialized());// Store exit idaction_url_next('id', 'value') pairs
                     destroy($idActionNext);		
 
                     # and a sum of exit actions
                     $recordName = Piwik_Funnels::getRecordName('nb_exit', $idFunnel, $idStep);
-                    $archiveProcessing->insertNumericRecord($recordName, $exitCount);
+                    $archiveProcessing->insertNumericRecord($recordName, $exitCount);//Store number of exits from this step
                     
                 }
                 
-                // Archive the referring urls that aren't funnel steps
+                // Archive the referring urls that aren't funnel steps. If it's the first step, then all referrers are archived
                 $idActionRef = new Piwik_DataTable();
                 $entryCount = 0;
-                foreach($current_step['idaction_url_ref'] as $id => $data)
+                foreach($current_step['idaction_url_ref'] as $id => $data)//idaction_url_ref('id', 'value') pairs. May come from multiple places
                 {
-                    $idActionRef->addRowFromSimpleArray($data);
+                    $idActionRef->addRowFromSimpleArray($data);//TODO Posible place to purify funnel analysis if late step entries are not desired
                     $entryCount += $data['value'];
                 }
                 $recordName = Piwik_Funnels::getRecordName('idaction_url_ref', $idFunnel, $idStep);
                 $archiveProcessing->insertBlobRecord($recordName, $idActionRef->getSerialized());
                 destroy($idActionRef);	
                 
-                # and a sum of entry actions
+                # and a sum of entry actions of a step
                 $recordName = Piwik_Funnels::getRecordName('nb_entry', $idFunnel, $idStep);
                 $archiveProcessing->insertNumericRecord($recordName, $entryCount);
 
@@ -429,7 +549,7 @@ class Piwik_Funnels extends Piwik_Plugin
             
             foreach ($goalConversions as $key => $value)
             {
-                if (isset($last_step['idaction_url_next'][$key]))
+                if (isset($last_step['idaction_url_next'][$key]))//BUG See storeRefAndNextUrls()//Fixed//'null value' damages non manual conversions
                 {
                     $nb_goal_actions += $last_step['idaction_url_next'][$key]['value'];
                     unset($last_step['idaction_url_next'][$key]);
@@ -589,7 +709,11 @@ class Piwik_Funnels extends Piwik_Plugin
         $sql = "CREATE TABLE IF NOT EXISTS ". Piwik_Common::prefixTable($tablename)." ( $spec )  DEFAULT CHARSET=utf8 " ;
         Piwik_Exec($sql);
     }
-    
+    /**
+     *  Query. Each row returns # of actions from a referrence, an action and a next action.
+     * @param type $archiveProcessing
+     * @return type 
+     */
     protected function queryFunnelSteps( $archiveProcessing )
     {
         $query = "SELECT idstep, idfunnel, idaction_url_ref, idaction_url, idaction_url_next, 
@@ -606,10 +730,19 @@ class Piwik_Funnels extends Piwik_Plugin
                 GROUP BY idstep, idfunnel, idaction_url_ref, idaction_url, idaction_url_next, 
                 idaction_url_ref_name, idaction_url_name, idaction_url_next_name
                 ORDER BY NULL";
-        $query = $archiveProcessing->db->query($query, array( $archiveProcessing->getStartDatetimeUTC(), $archiveProcessing->getEndDatetimeUTC(), $archiveProcessing->idsite ));
+        
+        $start = $archiveProcessing->getStartDatetimeUTC();
+        $end = $archiveProcessing->getEndDatetimeUTC();
+        $query = $archiveProcessing->db->query($query, array( $start, $end, $archiveProcessing->idsite ));
         return $query;
     }
     
+    /**
+     * Initializes step variables in $funnelDefinitions: nb_actions, nb_next_step_actions, 
+     * percent_next_step_actions, idaction_url, idaction_url_ref, idaction_url_next
+     * @param type $funnelDefinitions
+     * @return type 
+     */
     protected function initializeStepData( $funnelDefinitions )
     {
         
@@ -630,17 +763,29 @@ class Piwik_Funnels extends Piwik_Plugin
         return $funnelDefinitions;
     }
     
+    /**
+     * Store the number of actions per step found on log_funnel_step into each
+     *  step of each funnel of $funnelDefinitions.
+     * Also, it will return the count of total number of actions in log_funnel_step
+     *  as $total
+     * @param type $funnelDefinitions
+     * @param type $archiveProcessing
+     * @return type array($funnelDefinitions, $total)
+     */
+    //BUG, null columns are not set. so $key may be null and can fail 
     protected function storeRefAndNextUrls( $funnelDefinitions, $archiveProcessing )
     {
         $total = 0;
-        // Sum the actions recorded for each funnel step, and store arrays of 
-        // the refering and next urls
         $query = $this->queryFunnelSteps($archiveProcessing);
-        while( $row = $query->fetch() )
+        
+        // Sum the actions recorded for each funnel step action, and store arrays of 
+        // the refering, action and next urls
+        while ( $row = $query->fetch() )
         {
             $idfunnel = $row['idfunnel'];
             $idstep = $row['idstep'];
             $funnelDefinition = &$funnelDefinitions[$idfunnel];
+            
             $url_fields = array(
                 'idaction_url_ref' => array(
                     'id' => $row['idaction_url_ref'], 
@@ -656,28 +801,34 @@ class Piwik_Funnels extends Piwik_Plugin
                 )
             );
 
+            //Iterate through steps per funnel adding the different rows of refs and actions and next actions into a single entry per step.
             foreach ($funnelDefinition['steps'] as &$step) 
             {
                 if ($step['idstep'] != $idstep){
                     continue;
                 }
-                    
+
                 // increment the number of actions for the step by the number in this row (this is a sum of 
                 // all actions for the step that have the same referring and next urls)
                 $step['nb_actions'] += $row['nb_actions'];
                 $total += $row['nb_actions'];
 
+
                 // store the total number of actions coming from each entry url and going to each exit url 
-                foreach ($url_fields as $key => $val)
+                foreach ($url_fields as $key => $val)//Fixed BUG, null columns are not set. so $val['id'] and $val['value'] may be null
                 {
+                    if ( !isset( $val['id'] ) ) {
+                        $val['id'] = 'null value';
+                    }
+
                     if (!isset($step[$key][$val['id']])){
                         // label for empty values need to be null rather than an empty string
                         // in order to be summed correctly
-                        $step[$key][$val['id']] = array('value' => 0, 'label' => $this->labelOrDefault($val['label'], 'null'));
+                        $step[$key][$val['id']] = array('value' => 0, 'label' => $this->labelOrDefault($val['label'], 'null'));//BUG $key is null if column is empty and null becoms array key which fails on archiving
                     }
-                    $step[$key][$val['id']]['value'] += $row['nb_actions'];	
+                    $step[$key][$val['id']]['value'] += $row['nb_actions'];
                 }
-            }			
+            }
         }
         return array($funnelDefinitions, $total);
     }
@@ -686,7 +837,7 @@ class Piwik_Funnels extends Piwik_Plugin
      * @param string $recordName 'nb_actions'
      * @param int $idFunnel to return the metrics for, or false to return overall 
      * @param int $idStep to return the metrics for, or false to return overall for funnel
-     * @return unknown
+     * @return string 'Funnels_[$idFunnel_][$idStep_]$recordName'
      */
     static public function getRecordName( $recordName, $idFunnel = false, $idStep = false )
     {
@@ -721,6 +872,7 @@ class Piwik_Funnels extends Piwik_Plugin
         if ($total == 0) return 0;
         return 100 * $amount / $total;
     }
+    
     /**
      * @param string $url The string to see if it matches
      * @param string $pattern_type One of 'regex', 'contains', or 'exact'
@@ -729,6 +881,7 @@ class Piwik_Funnels extends Piwik_Plugin
      * @return boolean true if $url matches $pattern given the $pattern_type 
      * and $case_sensitive-ity
      */
+    //TODO BUG: if $case_sensitive==false && $pattern_type==contains then Step will mismatch urls for page titles and vice versa. Severity: Medium
     static public function isMatch($url, $pattern_type, $pattern, $case_sensitive = true) {
 
         $match = false;

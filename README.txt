@@ -10,6 +10,13 @@ Updated to work with Piwik v1.5 by Jess Telford @ Zibbet.com
 Changelog
 =========
 
+Funnels 20120622
+----------------
+
+* Funnels can now use Goals as part of a Funnel step (Useful in videogame tracking).
+* Fixed minor bug when there were no Goals in Piwik.
+* Tested successfully up to Piwik 1.7. Piwik 1.7.1 will have graphical errors
+
 Funnels 20062011
 ----------------
 * Funnels can be defined by page title as well as URL

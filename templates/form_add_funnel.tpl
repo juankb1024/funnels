@@ -24,7 +24,7 @@
                     <option value="{$goal.idgoal}">{$goal.name}</option>
                     {/foreach}
                 </select>
-                <span id="goal_name">	
+                <span id="goal_name"> 
                 </span>
             </td>
         </tr>
@@ -64,14 +64,31 @@
                     <input type="radio" class="match_attribute_title" value="title" name="match_attribute_{$smarty.section.funnel_step.index}" />
                     <label for="match_attribute_title">{'Funnels_MatchVisitPageTitle'|translate}</label>
                     <br />
+                    <input type="radio" id="match_attribute_goal_{$smarty.section.funnel_step.index}" class="match_attribute_goal" value="goal" name="match_attribute_{$smarty.section.funnel_step.index}" />
+                    <label for="match_attribute_title">{'Funnels_MatchVisitPageGoal'|translate}</label>
+                    <br />
                 </td>
                 <td>
-                    <select name="step_pattern_type" class="inp" id="step_pattern_type_{$smarty.section.funnel_step.index}" >
-                        <option value="contains">{'Funnels_PatternContains'|translate}</option>
-                        <option value="exact">{'Funnels_PatternExact'|translate}</option>
-                        <option value="regex">{'Funnels_PatternRegex'|translate}</option>
-                    </select><br />
-                    <input type="text" class="inp" name="step_pattern" size="40" id="step_pattern_{$smarty.section.funnel_step.index}" value="" />
+
+                    <span id="match_attribute_name_{$smarty.section.funnel_step.index}">
+
+                        <select name="step_pattern_type" class="inp" id="step_pattern_type_{$smarty.section.funnel_step.index}" > 
+                            <option value="contains">{'Funnels_PatternContains'|translate}</option> 
+                            <option value="exact">{'Funnels_PatternExact'|translate}</option> 
+                            <option value="regex">{'Funnels_PatternRegex'|translate}</option> 
+                        </select><br /> 
+                        <input type="text" class="inp" name="step_pattern" size="40" id="step_pattern_{$smarty.section.funnel_step.index}" value="" />
+
+                    </span>
+
+                    <select style="display: none" name="goal_step_id_{$smarty.section.funnel_step.index}" class="inp" id="step_pattern_goal_{$smarty.section.funnel_step.index}"> 
+                        {foreach from=$goals item=goal} 
+                            <option value="{$goal.idgoal}">{$goal.name}</option> 
+                        {/foreach} 
+                    </select>
+                    <span name="goal_error" style="display: none" id="step_pattern_goal_help_{$smarty.section.funnel_step.index}">
+                        <h4>{'Funnels_GoalError'|translate}</h4>
+                    </span>
                 </td>
                 <td>
                     <input type="checkbox" class="inp" name="step_case" id="step_case_{$smarty.section.funnel_step.index}" />

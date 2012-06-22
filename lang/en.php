@@ -48,5 +48,9 @@ $translations = array(
     'Funnels_PatternExact' => 'is exactly',
     'Funnels_PatternRegex' => 'matches the expression',
     'Funnels_MatchVisitUrl' => 'Visit a given URL (page or group of pages)',
-    'Funnels_MatchVisitPageTitle' => 'Visit a given Page Title'
+    'Funnels_MatchVisitPageTitle' => 'Visit a given Page Title',
+    'Funnels_MatchVisitPageGoal' => 'Convert a given Goal',
+    'Funnels_MatchVisitPageGoalHelp' => 'Converts the Goal:',
+    'Funnels_GoalError' => 'You cannot repeated Goals in a Funnel\'s steps',
+    'Funnels_GoalStep' => 'id: '
 );

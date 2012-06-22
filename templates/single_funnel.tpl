@@ -21,7 +21,14 @@
 					<div>
 						<div>
 							<h3>{$step.name}</h3>
-                            <div><span class="type">{$step.pattern_type}:</span> {$step.url}</div>
+                                                        <div>
+                                                            <span class="type">{$step.pattern_type}:</span> 
+                                                            {$step.match_attribute}
+                                                            {if $step.match_attribute eq "goal"}
+                                                                {'Funnels_GoalStep'|translate}
+                                                            {/if}
+                                                            {$step.url}
+                                                        </div>
                             <h3>{$step.nb_actions}</h3>
 							<b class="funnel_bar_graph">
 								<b style="width:{$step.percent_next_step_actions}%"></b>
@@ -57,8 +64,11 @@
 					<div>
 						<div>
 							<h3>
-								<span class="label">{$name}</span> {$goal_conversions}
+								<span class="label">{$name}</span> 
 							</h3>
+                                                        <h3>
+                                                            {$goal_conversions}
+                                                        </h3>
 							<p>
 								{$conversion_rate}% {'Funnels_FunnelConversionRate'|translate}
 							</p>

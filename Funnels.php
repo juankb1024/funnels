@@ -184,7 +184,7 @@ class Piwik_Funnels extends Piwik_Plugin
             
         } 
         
-        //This was just inserted so it should not fail else fail silently
+        //This was just inserted eventhough it should not fail else fail silently
         if (!$idActionUrl) {
             return;
         }
@@ -273,7 +273,7 @@ class Piwik_Funnels extends Piwik_Plugin
         
         //Check to see if manual goal conversion is a funnel goal and not step goal
 //        if (strstr($actionName, "GoalId_") !== FALSE)
-//        {
+//        Get Previous action from funnel log
             $query = Piwik_Query("SELECT idfunnel FROM " . Piwik_Common::prefixTable('log_funnel_step') . "
             WHERE idsite = ? 
             AND   idvisit = ? 
@@ -299,6 +299,7 @@ class Piwik_Funnels extends Piwik_Plugin
                         AND   idaction_url_next is null", 
                         array(Piwik_Funnels::INDEX_MANUAL_CONVERSION, $idSite, $idFunnel, $idVisit, $idRefererAction));
                 }else{
+                    //In case the user exists, record the exit action
                     printDebug("idActionUrl " . $idActionUrl . " idSite " . $idSite . " idVisit " . $idVisit . " idRefererAction " . $idRefererAction);
                     $previous_step_action = Piwik_Query("UPDATE ".Piwik_Common::prefixTable('log_funnel_step')."
                         SET   idaction_url_next = ?
@@ -354,6 +355,15 @@ class Piwik_Funnels extends Piwik_Plugin
                 //TODO BUG: if $step['case_sensitive']=false && $step['pattern_type']=contains then Step will mismatch urls for page titles. Severity: Medium
                 if (self::isMatch($url, $step['pattern_type'], $step['url'], $step['case_sensitive']))
                 {
+                    //Alter previous step id since it might change if it is not a url
+                    $previous_step_action = Piwik_Query("UPDATE ".Piwik_Common::prefixTable('log_funnel_step')."
+                        SET   idaction_url_next = ?
+                        WHERE idsite = ? 
+                        AND   idfunnel = ?
+                        AND   idvisit = ? 
+                        AND   idaction_url = ?", 
+                        array($idActionUrl, $idSite, $idFunnel, $idVisit, $idRefererAction));
+                    
                     printDebug("Matched Funnel " . $funnel['idfunnel'] . " Step " . $step['idstep'] . "(name: " . $step['name'] . ", url: " . $step['url']. "). ");
                     $serverTime = time();
                     $datetimeServer = Piwik_Tracker::getDatetimeFromTimestamp($serverTime);
